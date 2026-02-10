@@ -4,26 +4,46 @@ import { z } from 'zod';
 
 export const maxDuration = 30;
 
+// ✅ Define schema ONCE
+const growPlantParams = z.object({
+  shouldGrow: z.boolean().describe('Whether to grow the plant'),
+});
+
 export async function POST(req: Request) {
   try {
     const { messages, gardenStats } = await req.json();
 
-    console.log("🌳 Grove is analyzing stats:", gardenStats);
+    console.log('🌳 Grove is analyzing stats:', gardenStats);
 
-    // Get the last user message to infer which plant to grow
-    const lastUserMessage = messages[messages.length - 1]?.content?.toLowerCase() || '';
+    // Get the last user message
+    const lastUserMessage =
+      messages[messages.length - 1]?.content?.toLowerCase() || '';
 
-    // Determine plant type from message
+    // Infer plant type
     let inferredPlantType: string | null = null;
-    if (lastUserMessage.includes('typing') || lastUserMessage.includes('type') || lastUserMessage.includes('keyboard')) {
+
+    if (
+      lastUserMessage.includes('typing') ||
+      lastUserMessage.includes('type') ||
+      lastUserMessage.includes('keyboard')
+    ) {
       inferredPlantType = 'typing_bamboo';
-    } else if (lastUserMessage.includes('email') || lastUserMessage.includes('investor') || lastUserMessage.includes('pitch')) {
+    } else if (
+      lastUserMessage.includes('email') ||
+      lastUserMessage.includes('investor') ||
+      lastUserMessage.includes('pitch')
+    ) {
       inferredPlantType = 'investor_oak';
-    } else if (lastUserMessage.includes('family') || lastUserMessage.includes('call') || lastUserMessage.includes('mom') || lastUserMessage.includes('dad')) {
+    } else if (
+      lastUserMessage.includes('family') ||
+      lastUserMessage.includes('call') ||
+      lastUserMessage.includes('mom') ||
+      lastUserMessage.includes('dad')
+    ) {
       inferredPlantType = 'family_rose';
     }
 
-    console.log(`🔍 Inferred plant type from message: ${inferredPlantType}`);
+    console.log(`🔍 Inferred plant type: ${inferredPlantType}`);
 
     const result = await generateText({
       model: google('gemini-2.5-flash'),
@@ -35,35 +55,41 @@ Current Garden Status:
 - Typing Bamboo: ${gardenStats.typing_bamboo_growth}%
 - Family Rose: ${gardenStats.family_rose_growth}%
 
-When the user mentions completing a task, use the growPlant tool and celebrate warmly!
+When the user mentions completing a task, use the growPlant tool and celebrate warmly.
 
 IMPORTANT: Always call the growPlant tool when the user mentions doing something productive.`,
       tools: {
         growPlant: tool({
           description: 'Grow a plant in the garden',
-          parameters: z.object({
-            shouldGrow: z.boolean().describe('Whether to grow the plant'),
-          }),
-          execute: async (_params: { shouldGrow: boolean }) => {
+          parameters: growPlantParams,
+          execute: async (args) => {
+            const { shouldGrow } = args;
+
+            if (!shouldGrow) {
+              return 'No growth triggered.';
+            }
+
             if (!inferredPlantType) {
-              console.log('❌ Could not infer plant type from message');
+              console.log('❌ Could not infer plant type');
               return 'Could not determine which plant to grow';
             }
 
-            const plantType = inferredPlantType;
             const increment = 10;
 
             const columnMapping: Record<string, string> = {
-              'investor_oak': 'investor_oak_growth',
-              'typing_bamboo': 'typing_bamboo_growth',
-              'family_rose': 'family_rose_growth',
+              investor_oak: 'investor_oak_growth',
+              typing_bamboo: 'typing_bamboo_growth',
+              family_rose: 'family_rose_growth',
             };
 
-            const columnName = columnMapping[plantType];
-            console.log(`🌱 Growing ${plantType} (column: ${columnName}) by ${increment}`);
+            const columnName = columnMapping[inferredPlantType];
+            console.log(
+              `🌱 Growing ${inferredPlantType} (${columnName}) by ${increment}`
+            );
 
             try {
               const { createClient } = await import('@supabase/supabase-js');
+
               const supabase = createClient(
                 process.env.NEXT_PUBLIC_SUPABASE_URL!,
                 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -73,23 +99,20 @@ IMPORTANT: Always call the growPlant tool when the user mentions doing something
               const currentValue = gardenStats[columnName] || 0;
               const newValue = Math.min(currentValue + increment, 100);
 
-              console.log(`📊 ${columnName}: ${currentValue} → ${newValue}`);
-
               const { error } = await supabase
                 .from('garden_stats')
                 .update({ [columnName]: newValue })
                 .eq('id', recordId);
 
               if (error) {
-                console.error('❌ Update error:', error);
-                return `Error updating: ${error.message}`;
+                console.error('❌ Supabase update error:', error);
+                return `Error updating garden: ${error.message}`;
               }
 
-              console.log('✅ Successfully updated database!');
-              return `Grew ${plantType} from ${currentValue}% to ${newValue}%`;
-            } catch (error: any) {
-              console.error('🔥 Tool execution error:', error.message);
-              return `Error: ${error.message}`;
+              return `Grew ${inferredPlantType} from ${currentValue}% to ${newValue}%`;
+            } catch (err: any) {
+              console.error('🔥 Tool execution error:', err.message);
+              return `Error: ${err.message}`;
             }
           },
         }),
@@ -97,42 +120,36 @@ IMPORTANT: Always call the growPlant tool when the user mentions doing something
       maxSteps: 5,
     });
 
-    console.log("✅ Final response:", result.text);
-
     let responseText = result.text;
 
     // Fallback response
     if (!responseText || responseText.trim().length === 0) {
       const plantEmojis: Record<string, string> = {
-        'investor_oak': '🌳',
-        'typing_bamboo': '🎋',
-        'family_rose': '🌹'
+        investor_oak: '🌳',
+        typing_bamboo: '🎋',
+        family_rose: '🌹',
       };
 
       const plantNames: Record<string, string> = {
-        'investor_oak': 'Investor Oak',
-        'typing_bamboo': 'Typing Bamboo',
-        'family_rose': 'Family Rose'
+        investor_oak: 'Investor Oak',
+        typing_bamboo: 'Typing Bamboo',
+        family_rose: 'Family Rose',
       };
 
       if (inferredPlantType) {
-        const emoji = plantEmojis[inferredPlantType] || '🌱';
-        const name = plantNames[inferredPlantType] || 'garden';
-        responseText = `Wonderful! ${emoji} Your ${name} just grew! Keep nurturing your garden!`;
+        responseText = `Wonderful! ${plantEmojis[inferredPlantType]
+          } Your ${plantNames[inferredPlantType]} just grew! Keep nurturing your garden!`;
       } else {
-        responseText = "Thanks for sharing! Keep growing your garden! 🌱";
+        responseText = 'Thanks for sharing! Keep growing your garden! 🌱';
       }
     }
 
-    console.log("📤 Sending response:", responseText);
-
     return Response.json({
       text: responseText,
-      toolCalls: result.toolCalls || [],
+      toolCalls: result.toolCalls ?? [],
     });
-
   } catch (error: any) {
-    console.error("❌ API ROUTE ERROR:", error.message);
+    console.error('❌ API ROUTE ERROR:', error.message);
     return new Response(error.message, { status: 500 });
   }
 }

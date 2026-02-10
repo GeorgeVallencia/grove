@@ -13,9 +13,11 @@ export async function POST(req: Request) {
     const { messages, gardenStats } = await req.json();
 
     const lastUserMessage =
-      messages[messages.length - 1]?.content?.toLowerCase() || '';
+      messages[messages.length - 1]?.content?.toLowerCase() ?? '';
 
-    let inferredPlantType: string | null = null;
+    let inferredPlantType: 'typing_bamboo' | 'investor_oak' | 'family_rose' | null =
+      null;
+
     if (lastUserMessage.includes('typing')) {
       inferredPlantType = 'typing_bamboo';
     } else if (lastUserMessage.includes('email')) {
@@ -27,14 +29,15 @@ export async function POST(req: Request) {
     const result = await generateText({
       model: google('gemini-2.5-flash'),
       messages,
-      system: `You are Grove, a warm and supportive life partner helping users grow their life garden.`,
+      system:
+        'You are Grove, a warm and supportive life partner helping users grow their life garden.',
       tools: {
-        growPlant: tool({
+        growPlant: tool<
+          { shouldGrow: boolean }, // input
+          string                  // output
+        >({
           description: 'Grow a plant in the garden',
           parameters: growPlantParams,
-
-          // 🔑 THIS IS THE MISSING PIECE
-          outputSchema: z.string(),
 
           execute: async ({ shouldGrow }) => {
             if (!shouldGrow) {
@@ -45,7 +48,10 @@ export async function POST(req: Request) {
               return 'Could not determine which plant to grow';
             }
 
-            const columnMapping: Record<string, string> = {
+            const columnMapping: Record<
+              'typing_bamboo' | 'investor_oak' | 'family_rose',
+              string
+            > = {
               investor_oak: 'investor_oak_growth',
               typing_bamboo: 'typing_bamboo_growth',
               family_rose: 'family_rose_growth',
@@ -84,6 +90,8 @@ export async function POST(req: Request) {
       toolCalls: result.toolCalls ?? [],
     });
   } catch (error: any) {
-    return new Response(error.message, { status: 500 });
+    return new Response(error.message ?? 'Internal Server Error', {
+      status: 500,
+    });
   }
 }

@@ -44,7 +44,7 @@ IMPORTANT: Always call the growPlant tool when the user mentions doing something
           parameters: z.object({
             shouldGrow: z.boolean().describe('Whether to grow the plant'),
           }),
-          execute: async () => {
+          execute: async (_params: { shouldGrow: boolean }) => {
             if (!inferredPlantType) {
               console.log('❌ Could not infer plant type from message');
               return 'Could not determine which plant to grow';
